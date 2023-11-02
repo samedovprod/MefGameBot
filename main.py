@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import subprocess
 import sys
 
 import git
@@ -48,6 +49,8 @@ def check_for_updates():
             logger.info("Доступно обновление. Хотите установить? (y/n)")
             answer = input().lower()
             if answer == 'y':
+                subprocess.run(["git", "reset", "--hard"], check=True)
+
                 origin.pull()
                 logger.info("Обновления были установлены.")
                 for commit in commits_behind[::-1]:
