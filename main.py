@@ -11,53 +11,71 @@ from dotenv import load_dotenv
 import db
 from handlers import Handlers
 
-logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+file_handler = logging.FileHandler('bot.log')
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
+
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
+
+
 load_dotenv()
 
 bot = Bot(token=os.getenv('BOT_TOKEN'))
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
-db = db.Database('database/mefmetrbot.db')
+database = db.Database('database/mefmetrbot.db')
 router = Router()
-handlers = Handlers(router, db, bot)
+handlers = Handlers(router, database, bot)
 
 dp.include_router(router)
 
 
 def check_for_updates():
-    repo = git.Repo(search_parent_directories=True)
-    origin = repo.remotes.origin
-    origin.fetch()
-    commits_behind = list(repo.iter_commits('main..origin/main'))
+    try:
+        repo = git.Repo(search_parent_directories=True)
+        origin = repo.remotes.origin
+        origin.fetch()
+        commits_behind = list(repo.iter_commits('main..origin/main'))
 
-    if commits_behind:
-        print("Доступно обновление. Хотите установить? (y/n)")
-        answer = input().lower()
-        if answer == 'y':
-            origin.pull()
-            print("Обновления были установлены.")
-            print("Список изменений:")
-            for commit in commits_behind[::-1]:
-                print(f"- {commit.summary}")
-            print("Перезапустите бота.")
-            return True
+        if commits_behind:
+            logger.info("Доступно обновление. Хотите установить? (y/n)")
+            answer = input().lower()
+            if answer == 'y':
+                origin.pull()
+                logger.info("Обновления были установлены.")
+                for commit in commits_behind[::-1]:
+                    logger.info(f"- {commit.summary}")
+                logger.info("Перезапустите бота.")
+                return True
+    except Exception as e:
+        logger.error(f"Ошибка проверки обновлений: {e}")
     return False
 
 
-def giveadm(id):
-    db.update_user(id, is_admin=1)
-    print(f"Пользователю с ID {id} были даны права администратора.")
+def giveadm(user_id):
+    try:
+        database.update_user(user_id, is_admin=1)
+        logger.info(f"Пользователю с ID {user_id} были даны права администратора.")
+    except Exception as e:
+        logger.error(f"Ошибка выдачи административных прав: {e}")
 
 
 if __name__ == '__main__':
     if len(sys.argv) == 3 and sys.argv[1] == "giveadm":
         try:
-            id = int(sys.argv[2])
-            giveadm(id)
+            user_id = int(sys.argv[2])
+            giveadm(user_id)
         except ValueError:
-            print("Ошибка: ID пользователя должно быть целым числом.")
+            logger.error("Ошибка: ID пользователя должно быть целым числом.")
         except Exception as e:
-            print(f"Произошла ошибка: {e}")
+            logger.error(f"Непредвиденная ошибка: {e}")
     else:
         update_available = check_for_updates()
         if update_available:

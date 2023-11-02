@@ -125,19 +125,23 @@ class Handlers:
     async def profile_command(self, message: types.Message):
         user_id = message.reply_to_message.from_user.id if message.reply_to_message else message.from_user.id
         user = self.db.get_user(user_id)
+
         if not user:
             await message.reply('❌ Профиль не найден')
             return
 
-        username = f"@{user[5]}" if user[5] else "не указан"
-        clan_name = self.db.get_clan_name(user[7]) if user[7] else "не в клане"
-        status = "👑 Администратор" if user[3] else "Пользователь"
+        username = f"@{user[5]}" if user[5] is not None else "не указан"
+        clan_name = self.db.get_clan_name(user[7]) if user[7] is not None else "не в клане"
+        status = "👑 Администратор" if user[3] == 1 else "Пользователь"
+        name = user[9]
 
-        profile_info = (f"{status}\n👤 Имя: {user[6]}\n"
-                        f"👥 Клан: {clan_name}\n"
-                        f"👥 Username: {username}\n"
-                        f"🆔 ID: {user_id}\n"
-                        f"🌿 Снюхано: {user[1]} грамм.")
+        profile_info = (
+            f"{status}\n👤 Имя: {name}\n"  
+            f"👥 Клан: {clan_name}\n"
+            f"👥 Username: {username}\n"
+            f"🆔 ID: {user_id}\n"
+            f"🌿 Снюхано: {user[1] if user[1] is not None else 0} грамм."
+        )
         await message.reply(profile_info, parse_mode='markdown')
 
     async def drug_command(self, message: types.Message):
@@ -145,7 +149,8 @@ class Handlers:
         user = self.db.get_user(user_id)
 
         if not user:
-            self.db.create_user(user_id)
+            print(f"Creating user with ID {user_id} and name {message.from_user.first_name}")
+            self.db.create_user(user_id, message.from_user.first_name)
             user = self.db.get_user(user_id)
 
         if await self.check_banned(user, message):
@@ -396,10 +401,10 @@ class Handlers:
             return
 
         clan_balance = clan[3] + cost
-        self.db.update_clan_balance_by_owner(clan[2], clan_balance)  # clan_owner_id
+        self.db.update_clan_balance_by_owner(clan[2], clan_balance)
         self.db.update_user(user_id, drug_count=user[1] - cost)
         await message.reply(f"✅ Вы успешно пополнили баланс клана `{clan[1]}` на `{cost}` гр.",
-                            parse_mode='markdown')  # clan_name
+                            parse_mode='markdown')
         await self.bot.send_message(
             message.chat.id,
             f"#DEPOSIT\n\nclanname: `{clan[1]}`\namount: `{cost}`\n"
@@ -437,7 +442,7 @@ class Handlers:
         self.db.update_clan_balance_by_owner(user_id, clan_balance)
         self.db.update_user(user_id, drug_count=user[1] + cost)
         await message.reply(f"✅ Вы успешно сняли `{cost}` гр. мефа с баланса клана `{clan[1]}`",
-                            parse_mode='markdown')  # clan_name
+                            parse_mode='markdown')
         await self.bot.send_message(
             message.chat.id,
             f"#WITHDRAW\n\namount: `{cost}`\nclanname: `{clan[1]}`\n"
@@ -721,8 +726,8 @@ class Handlers:
                                     last_find=datetime.now().isoformat())
                 await self.bot.send_message(
                     message.chat.id,
-                    f"#FIND #WIN\n\nfirst\\_name: `{message.from_user.first_name}`\n"
-                    f"count: `{count}`\ndrug\\_count: `{drug_count + count}`\n\n"
+                    f"#FIND #WIN\n\nfirst_name: `{message.from_user.first_name}`\n"
+                    f"count: `{count}`\ndrug_count: `{drug_count + count}`\n\n"
                     f"[mention](tg://user?id={user_id})",
                     parse_mode='markdown'
                 )
@@ -731,20 +736,26 @@ class Handlers:
                     f"мефчика!\n🌿 Твое время команды /drug обновлено",
                     parse_mode='markdown')
             elif random.randint(1, 100) <= 50:
-                count = random.randint(1, round(drug_count))
-                self.db.update_user(user_id, drug_count=drug_count - count)
-                await self.bot.send_message(
-                    message.chat.id,
-                    f"#FIND #LOSE\n\nfirst\\_name: `{message.from_user.first_name}`\n"
-                    f"count: `{count}`\ndrug\\_count: `{drug_count - count}`\n\n"
-                    f"[mention](tg://user?id={user_id})",
-                    parse_mode='markdown'
-                )
-                await message.reply(
-                    f"❌ *{message.from_user.first_name}*, тебя *спалил мент* и *дал тебе по ебалу*\n🌿 Тебе нужно "
-                    f"откупиться, мент предложил взятку в размере `{count} гр.`\n⏳ Следующая попытка доступна через "
-                    f"*12 часов.*",
-                    parse_mode='markdown')
+                if drug_count > 0:
+                    count = random.randint(1, drug_count)
+                    self.db.update_user(user_id, drug_count=drug_count - count)
+                    await self.bot.send_message(
+                        message.chat.id,
+                        f"#FIND #LOSE\n\nfirst_name: `{message.from_user.first_name}`\n"
+                        f"count: `{count}`\ndrug_count: `{drug_count - count}`\n\n"
+                        f"[mention](tg://user?id={user_id})",
+                        parse_mode='markdown'
+                    )
+                    await message.reply(
+                        f"❌ *{message.from_user.first_name}*, тебя *спалил мент* и *дал тебе по ебалу*\n🌿 Тебе нужно "
+                        f"откупиться, мент предложил взятку в размере `{count} гр.`\n⏳ Следующая попытка доступна через"
+                        f"*12 часов.*",
+                        parse_mode='markdown')
+                else:
+                    await message.reply(
+                        "❌ У тебя нет мефчика, который могли бы забрать.",
+                        parse_mode='markdown'
+                    )
 
     async def banuser_command(self, message: types.Message):
         user = self.db.get_user(message.from_user.id)

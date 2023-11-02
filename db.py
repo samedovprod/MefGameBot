@@ -11,7 +11,7 @@ class Database:
         self.cursor.execute(
             'CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, drug_count INTEGER, last_use_time TEXT,'
             'is_admin INTEGER, is_banned INTEGER, last_casino TEXT, last_find TEXT, clan_member INTEGER, '
-            'clan_invite INTEGER)')
+            'clan_invite INTEGER, first_name TEXT)')
         self.cursor.execute(
             'CREATE TABLE IF NOT EXISTS chats (chat_id INTEGER PRIMARY KEY, is_ads_enable INTEGER DEFAULT 1)')
         self.cursor.execute(
@@ -36,12 +36,14 @@ class Database:
         self.cursor.execute(f'UPDATE users SET {fields} WHERE id = ?', (*values, user_id))
         self.conn.commit()
 
-    def create_user(self, user_id, drug_count=0, is_admin=0, is_banned=0, last_use_time=None, last_casino=None,
+    def create_user(self, user_id, first_name, drug_count=0, is_admin=0, is_banned=0, last_use_time=None,
+                    last_casino=None,
                     last_find=None, clan_member=None, clan_invite=None):
         self.cursor.execute(
-            'INSERT INTO users (id, drug_count, last_use_time, is_admin, is_banned, last_casino, last_find, '
-            'clan_member, clan_invite) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            (user_id, drug_count, last_use_time, is_admin, is_banned, last_casino, last_find, clan_member, clan_invite))
+            'INSERT INTO users (id, first_name, drug_count, last_use_time, is_admin, is_banned, last_casino, last_find,'
+            'clan_member, clan_invite) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            (user_id, first_name, drug_count, last_use_time, is_admin, is_banned, last_casino, last_find, clan_member,
+             clan_invite))
         self.conn.commit()
 
     def update_last_use_time(self, user_id, time):
