@@ -1,11 +1,11 @@
+import logging
 import random
-import sys
 from datetime import datetime, timedelta
 
 from aiogram import types
 from aiogram.filters import Command, ChatMemberUpdatedFilter, IS_NOT_MEMBER, IS_MEMBER
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, ChatMemberUpdated
+from aiogram.types import ChatMemberUpdated
 
 
 class Handlers:
@@ -68,7 +68,7 @@ class Handlers:
 
     @staticmethod
     async def rules_command(message: types.Message):
-        await message.reply('''Правила пользования MefMetrBot:
+        await message.reply('''Правила пользования MefGameBot:
                           *1) Мультиаккаунтинг - бан навсегда и обнуление всех аккаунтов *
                           *2) Использование любых уязвимостей бота - бан до исправления и возможное обнуление*
                           *3) Запрещена реклама через топ кланов и топ юзеров - выговор, после бан с обнулением*
@@ -105,17 +105,15 @@ class Handlers:
                     ''', parse_mode='markdown')
 
     async def add_chat(self, update: ChatMemberUpdated):
+        logging.info(f"Обрабатывается update: {update}")
         if update.new_chat_member.user.id == self.bot.id and update.new_chat_member.status == 'member':
+            logging.info(f"Добавление нового чата: {update.chat.id}")
             self.db.add_chat(update.chat.id)
             await self.bot.send_message(
                 update.chat.id,
                 f"#NEWCHAT\n\nchatid: `{update.chat.id}`",
                 parse_mode='markdown'
             )
-
-        # @dp.message_handler(commands=['casino'])
-        # async def start_command(message: types.Message):
-        #     await message.reply("❌ *Резерв казино закончился. Попробуйте, пожалуйста, позже!*", parse_mode='markdown')
 
     @staticmethod
     async def check_banned(user, message):
@@ -124,191 +122,133 @@ class Handlers:
             return True
         return False
 
-    def get_user_info(self, message):
-        if message.reply_to_message:
-            user_id = message.reply_to_message.from_user.id
-        else:
-            user_id = message.from_user.id
-        return self.db.get_user(user_id)
-
     async def profile_command(self, message: types.Message):
-        if message.reply_to_message:
-            user_id = message.reply_to_message.from_user.id
-        else:
-            user_id = message.from_user.id
-
+        user_id = message.reply_to_message.from_user.id if message.reply_to_message else message.from_user.id
         user = self.db.get_user(user_id)
         if not user:
             await message.reply('❌ Профиль не найден')
             return
 
-        drug_count = user[1]
-        is_admin = user[3]
-        clan_member = user[7]
-        clan_name = self.db.get_clan_by_name(clan_member) if clan_member else None
+        username = f"@{user[5]}" if user[5] else "не указан"
+        clan_name = self.db.get_clan_name(user[7]) if user[7] else "не в клане"
+        status = "👑 Администратор" if user[3] else "Пользователь"
 
-        if user_id == message.from_user.id:
-            username = message.from_user.username.replace('_', '\_') if message.from_user.username else None
-            full_name = message.from_user.full_name
-        else:
-            username = message.reply_to_message.from_user.username.replace('_',
-                                                                           '\_') if message.reply_to_message.from_user.username else None
-            full_name = message.reply_to_message.from_user.full_name
+        profile_info = (f"{status}\n👤 Имя: {user[6]}\n"
+                        f"👥 Клан: {clan_name}\n"
+                        f"👥 Username: {username}\n"
+                        f"🆔 ID: {user_id}\n"
+                        f"🌿 Снюхано: {user[1]} грамм.")
+        await message.reply(profile_info, parse_mode='markdown')
 
-        if is_admin == 1:
-            if clan_member:
-                await message.reply(
-                    f"👑 *Администратор*\n👤 *Имя:* _{full_name}_\n👥 *Клан:* *{clan_name}*\n👥 *Username "
-                    f"пользователя:* @{username}\n🆔 *ID пользователя:* `{user_id}`\n🌿 *Снюхано* _{drug_count}_ "
-                    f"грамм.",
-                    parse_mode='markdown')
-            else:
-                await message.reply(
-                    f"👑 *Администратор*\n👤 *Имя:* _{full_name}_\n👥 *Username пользователя:* @{username}\n🆔 "
-                    f"*ID пользователя:* `{user_id}`\n🌿 *Снюхано* _{drug_count}_ грамм.",
-                    parse_mode='markdown')
-        else:
-            if clan_member:
-                await message.reply(
-                    f"👤 *Имя:* _{full_name}_\n👥 *Клан:* *{clan_name}*\n👥 *Username пользователя:* @{username}\n🆔 *ID пользователя:* `{user_id}`\n🌿 *Снюхано* _{drug_count}_ грамм.",
-                    parse_mode='markdown')
-            else:
-                await message.reply(
-                    f"👤 *Имя:* _{full_name}_\n👥 *Username пользователя:* @{username}\n🆔 *ID пользователя: * `{user_id}`\n🌿 *Снюхано* _{drug_count}_ грамм.",
-                    parse_mode='markdown')
-
-    async def drug_command(self, message: types.Message, state: FSMContext):
-        format = '%Y-%m-%d %H:%M:%S.%f'
+    async def drug_command(self, message: types.Message):
         user_id = message.from_user.id
         user = self.db.get_user(user_id)
-        drug_count = user[1] if user else 0
-        last_use_time = user[2] if user else 0
-        is_admin = user[3] if user else 0
-        is_banned = user[4] if user else 0
-        use_time = datetime.strptime(last_use_time, format) if user else 0
+
+        if not user:
+            self.db.create_user(user_id)
+            user = self.db.get_user(user_id)
+
         if await self.check_banned(user, message):
             return
-        elif is_banned == 0:
-            if last_use_time and (datetime.now() - use_time) < timedelta(hours=1):
-                remaining_time = timedelta(hours=1) - (datetime.now() - use_time)
-                await message.reply(
-                    f"❌ *{message.from_user.first_name}*, _ты уже нюхал(-а)!_\n\n🌿 Всего снюхано `{drug_count} грамм` "
-                    f"мефедрона\n\n⏳ Следующий занюх доступен через `1 час.`",
-                    parse_mode='markdown')
-            elif random.randint(0, 100) < 20:
-                if last_use_time and (datetime.now() - use_time) < timedelta(hours=1):
-                    remaining_time = timedelta(hours=1) - (datetime.now() - use_time)
-                    await message.reply(
-                        f"🧂 *{message.from_user.first_name}*, _ты просыпал(-а) весь мефчик!_\n\n🌿 Всего снюхано `{drug_count}` грамм мефедрона\n\n⏳ Следующий занюх доступен через `1 час.`",
-                        parse_mode='markdown')
-                    self.db.update_last_use_time(user_id, datetime.now())
-            else:
-                count = random.randint(1, 10)
-                if user:
-                    self.db.update_drug_count(user_id, count)
-                else:
-                    self.db.create_user(user_id, drug_count=count)
-                self.db.update_last_use_time(user_id, datetime.now())
-                await message.reply(
-                    f"👍 *{message.from_user.first_name}*, _ты занюхнул(-а) {count} грамм мефчика!_\n\n🌿 Всего снюхано `{drug_count + count}` грамм мефедрона\n\n⏳ Следующий занюх доступен через `1 час.`",
-                    parse_mode='markdown')
+
+        current_time = datetime.now()
+        drug_usage_timeout = timedelta(hours=1)
+        minimum_drug_find_chance = 20
+        drug_amount_range = (1, 10)
+
+        last_use_time = datetime.fromisoformat(user[2]) if user[2] else None
+        drug_count = user[1]
+
+        if last_use_time and (current_time - last_use_time) < drug_usage_timeout:
+            next_available_time = (current_time + drug_usage_timeout).strftime("%H:%M")
+            await message.reply(
+                f"❌ {message.from_user.first_name}, ты уже нюхал(-а)!\n\n"
+                f"🌿 Всего снюхано `{drug_count} грамм` мефедрона\n\n"
+                f"⏳ Приходи в {next_available_time}.",
+                parse_mode='markdown')
+        elif random.randint(0, 100) < minimum_drug_find_chance:
+            await message.reply(f"🧂 {message.from_user.first_name}, ты просыпал(-а) весь мефчик!",
+                                parse_mode='markdown')
+            self.db.update_last_use_time(user_id, current_time.isoformat())
+        else:
+            next_available_time = (current_time + drug_usage_timeout).strftime("%H:%M")
+            drug_count_to_add = random.randint(*drug_amount_range)
+            self.db.update_drug_count(user_id, drug_count_to_add)
+            await message.reply(
+                f"👍 {message.from_user.first_name}, ты занюхнул(-а) {drug_count_to_add} грамм мефчика!\n\n"
+                f"🌿 Всего снюхано `{drug_count + drug_count_to_add}` грамм мефедрона\n\n"
+                f"⏳ Приходи в {next_available_time}.",
+                parse_mode='markdown')
 
     async def top_command(self, message: types.Message):
-        user_id = message.from_user.id
-        user = self.db.get_user(user_id)
-        is_banned = user[4] if user else 0
-        if await self.check_banned(user, message):
+        top_users = self.db.get_top_users()
+        if not top_users:
+            await message.reply('Никто еще не принимал меф.')
             return
-        elif is_banned == 0:
-            top_users = self.db.get_top_users()
-            if top_users:
-                response = "🔝ТОП 10 ЛЮТЫХ МЕФЕНДРОНЩИКОВ В МИРЕ🔝:\n"
-                counter = 1
-                for user in top_users:
-                    user_id = user[0]
-                    if user_id == self.bot.id:
-                        continue
-                    drug_count = user[1]
-                    user_info = await self.bot.get_chat(user_id)
-                    response += f"{counter}) *{user_info.full_name}*: `{drug_count} гр. мефа`\n"
-                    counter += 1
-                await message.reply(response, parse_mode='markdown')
-            else:
-                await message.reply('Никто еще не принимал меф.')
+
+        response = "🔝ТОП ЛЮТЫХ МЕФЕНДРОНЩИКОВ В МИРЕ🔝:\n"
+        for rank, (user_id, drug_count) in enumerate(top_users, start=1):
+            if user_id == self.bot.id:
+                continue
+            user_info = await self.bot.get_chat(user_id)
+            response += f"{rank}) {user_info.full_name}: {drug_count} гр. мефа\n"
+        await message.reply(response, parse_mode='markdown')
 
     async def take_command(self, message: types.Message, state: FSMContext):
         user_id = message.from_user.id
         user = self.db.get_user(user_id)
-        is_banned = user[4] if user else 0
         if await self.check_banned(user, message):
             return
-        elif is_banned == 0:
-            reply_msg = message.reply_to_message
-            if reply_msg and reply_msg.from_user.id == self.bot.id:
-                await message.reply(f'❌ Вы не можете забрать меф у бота')
-                return
-            elif reply_msg and reply_msg.from_user.id != message.from_user.id:
-                user_id = reply_msg.from_user.id
-                user = self.db.get_user(user_id)
-                your_user_id = message.from_user.id
-                your_user = self.db.get_user(your_user_id)
-                if user and your_user:
-                    drug_count = user[1]
-                    your_drug_count = your_user[1]
-                    if drug_count > 1 and your_drug_count > 1:
-                        last_time = await state.get_data()
-                        if last_time and (datetime.now() - last_time['time']) < timedelta(days=1):
-                            remaining_time = timedelta(days=1) - (datetime.now() - last_time['time'])
-                            await message.reply(
-                                f"❌ Нельзя пиздить меф так часто! Ты сможешь спиздить меф через 1 день.")
-                        else:
-                            variables = ['noticed', 'hit', 'pass']
-                            randomed = random.choice(variables)
-                            if randomed == 'noticed':
-                                self.db.update_user(your_user_id, drug_count=-1)
-                                await message.reply(
-                                    '❌ *Жертва тебя заметила*, и ты решил убежать. Спиздить меф не получилось. Пока ты '
-                                    'бежал, *ты потерял* `1 гр.`',
-                                    parse_mode='markdown')
-                            elif randomed == 'hit':
-                                self.db.update_user(your_user_id, drug_count=-1)
-                                await message.reply(
-                                    '❌ *Жертва тебя заметила*, и пизданула тебя бутылкой по башке бля. Спиздить меф не '
-                                    'получилось. *Жертва достала из твоего кармана* `1 гр.`',
-                                    parse_mode='markdown')
 
-                            elif randomed == 'pass':
-                                self.db.update_user(user_id, drug_count=-1)
-                                self.db.update_user(your_user_id, drug_count=1)
-                                if reply_msg.from_user.username:
-                                    username = reply_msg.from_user.username.replace('_', '\_')
-                                else:
-                                    username = f'[{reply_msg.from_user.first_name}](tg://user?id={reply_msg.from_user.id})'
-                                await message.reply(
-                                    f"✅ [{message.from_user.first_name}](tg://user?id={message.from_user.id}) _спиздил("
-                                    f"-а) один грам мефа у_ @{username}!",
-                                    parse_mode='markdown')
-                            await state.set_data({'time': datetime.now()})
-                    elif drug_count < 1:
-                        await message.reply('❌ У жертвы недостаточно снюханного мефа для того чтобы его спиздить')
-                    elif your_drug_count < 1:
-                        await message.reply('❌ У тебя недостаточно снюханного мефа для того пойти искать жертву')
-                else:
-                    await message.reply('❌ Этот пользователь еще не нюхал меф')
-            else:
-                await message.reply('❌ Ответьте на сообщение пользователя, у которого хотите спиздить мефедрон.')
+        reply_msg = message.reply_to_message
+        if not reply_msg:
+            await message.reply('❌ Ответьте на сообщение пользователя, у которого хотите спиздить мефедрон.')
+            return
+        if reply_msg.from_user.id in [self.bot.id, message.from_user.id]:
+            await message.reply(f'❌ Вы не можете забрать меф у бота или у себя')
+            return
+
+        target_user = self.db.get_user(reply_msg.from_user.id)
+        if not target_user or not user:
+            await message.reply('❌ Этот пользователь еще не нюхал меф или профиль не найден')
+            return
+
+        last_time = await state.get_data() or {'time': datetime.min}
+        if datetime.now() - last_time['time'] < timedelta(days=1):
+            await message.reply("❌ Нельзя пиздить меф так часто! Ты сможешь спиздить меф через 1 день.")
+            return
+
+        result = self.steal_drug(user, target_user)
+        await message.reply(result, parse_mode='markdown')
+        await state.set_data({'time': datetime.now()})
+
+    def steal_drug(self, user, target_user):
+        if target_user[1] < 1:
+            return '❌ У жертвы недостаточно снюханного мефа для того чтобы его спиздить'
+        if user[1] < 1:
+            return '❌ У тебя недостаточно снюханного мефа для того пойти искать жертву'
+
+        randomed = random.choice(['noticed', 'hit', 'pass'])
+        if randomed == 'noticed':
+            self.db.update_drug_count(user[0], -1)
+            return '❌ *Жертва тебя заметила*, и ты решил убежать. Спиздить меф не получилось. Пока ты бежал, ' \
+                   '*ты потерял* `1 гр.`'
+        elif randomed == 'hit':
+            self.db.update_drug_count(user[0], -1)
+            return '❌ *Жертва тебя заметила*, и пизданула тебя бутылкой по башке бля. Спиздить меф не получилось. ' \
+                   '*Жертва достала из твоего кармана* `1 гр.`'
+
+        self.db.update_drug_count(target_user[0], -1)
+        self.db.update_drug_count(user[0], -1)
+        username_mention = f"[{target_user['username']}](tg://user?id={target_user['id']})" if target_user[
+            'username'] else target_user['full_name']
+        return f"✅ {user['full_name']} _спиздил(-а) один грам мефа у_ {username_mention}!"
 
     async def casino(self, message: types.Message):
         args = message.text.split(maxsplit=1)
         user_id = message.from_user.id
         user = self.db.get_user(user_id)
-
-        if not user:
-            await message.reply('🛑 Ваш профиль не найден.')
-            return
-
-        if user[4]:
-            await message.reply('🛑 Вы заблокированы в боте.')
+        if await self.check_banned(user, message):
             return
 
         if len(args) < 2:
@@ -316,18 +256,9 @@ class Handlers:
                                 parse_mode='markdown')
             return
 
-        try:
-            bet = int(args[1])
-            if bet < 1:
-                await message.reply("🛑 Ставка должна быть больше 0.", parse_mode='markdown')
-                return
-        except ValueError:
-            await message.reply("🛑 Нужно указать целое число!", parse_mode='markdown')
-            return
-
-        drug_count = user[1]
-        if bet > drug_count:
-            await message.reply("🛑 Твоя ставка больше твоего баланса!", parse_mode='markdown')
+        bet = int(args[1]) if args[1].isdigit() and int(args[1]) > 0 else None
+        if bet is None:
+            await message.reply("🛑 Нужно указать целое число больше нуля для ставки!", parse_mode='markdown')
             return
 
         last_used = user[5]
@@ -336,100 +267,75 @@ class Handlers:
                                 parse_mode='markdown')
             return
 
-        randomed = random.randint(1, 100)
         multipliers = [2, 1.5, 1.25, 1.1, 0]
         weights = [1, 2, 3, 4, 90]
         multiplier = random.choices(multipliers, weights=weights)[0]
+        win_amount = round(bet * multiplier, 1) if multiplier else 0
 
         if multiplier:
-            win_amount = round(bet * multiplier, 1)
-            self.db.update_user(user_id, drug_count=drug_count + win_amount - bet)
             await message.reply(
                 f'🤑 *Ебать тебе повезло!* Твоя ставка *умножилась* на `{multiplier}`. Твой выигрыш: `{win_amount}` гр.',
                 parse_mode='markdown')
         else:
-            self.db.update_user(user_id, drug_count=drug_count - bet)
             await message.reply('😔 *Ты проебал* свою ставку, *нехуй было* крутить казик.', parse_mode='markdown')
 
-        self.db.update_user(user_id, last_casino=datetime.now().isoformat())
+        self.db.update_user(user_id, drug_count=user[1] + win_amount - bet, last_casino=datetime.now().isoformat())
 
-    async def give_command(self, message: types.Message, state: FSMContext):
+    async def give_command(self, message: types.Message):
         user_id = message.from_user.id
         user = self.db.get_user(user_id)
-        if not user or user[4]:
-            await message.reply('🛑 Вы заблокированы в боте или профиль не найден!')
+        if await self.check_banned(user, message):
             return
 
         args = message.text.split(maxsplit=1)
-        if not args:
+        if len(args) < 2:
             await message.reply('❌ Необходимо указать количество граммов для передачи')
             return
 
-        try:
-            value = int(args[0])
-            if value <= 0:
-                await message.reply(f'❌ Значение должно быть положительным числом')
-                return
-        except ValueError:
-            await message.reply(f'❌ Введи целое число')
+        value = int(args[1]) if args[1].isdigit() and int(args[1]) > 0 else None
+        if value is None:
+            await message.reply('❌ Значение должно быть положительным числом и не равным нулю')
             return
 
         reply_msg = message.reply_to_message
-        if not reply_msg or reply_msg.from_user.id == user_id or reply_msg.from_user.id == self.bot.id:
-            await message.reply(f'❌ Некорректный получатель')
+        if not reply_msg or reply_msg.from_user.id in [user_id, self.bot.id]:
+            await message.reply('❌ Некорректный получатель')
             return
 
         recipient_id = reply_msg.from_user.id
         recipient = self.db.get_user(recipient_id)
+
         if not recipient:
-            await message.reply(f'❌ Профиль получателя не найден!')
+            await message.reply('❌ Профиль получателя не найден!')
             return
 
-        your_drug_count = user[1]
-        if your_drug_count < value:
+        if user[1] < value:
             await message.reply(f'❌ Недостаточно граммов мефа для передачи')
             return
 
         commission = round(value * 0.10)
         net_value = value - commission
-        botbalance = self.db.get_user(self.bot.id)[1]
 
-        self.db.update_user(recipient_id, drug_count=net_value)
-        self.db.update_user(user_id, drug_count=-value)
-        self.db.update_user(self.bot.id, drug_count=botbalance + commission)
-
-        await self.bot.send_message(message.chat.id,
-                                    f"#GIVE\n\nfirst\_name: `{message.from_user.first_name}`\nuserid: `{user_id}`\nto: `{reply_msg.from_user.first_name}`\nvalue: `{net_value}`",
-                                    parse_mode='markdown')
-
-        if reply_msg.from_user.username:
-            username_mention = f"[{reply_msg.from_user.first_name}](tg://user?id={recipient_id})"
-        else:
-            username_mention = reply_msg.from_user.first_name
+        self.db.update_user(recipient_id, drug_count=recipient[1] + net_value)
+        self.db.update_user(user_id, drug_count=user[1] - value)
+        self.db.update_user(self.bot.id, drug_count=self.db.get_user(self.bot.id)[1] + commission)
 
         await message.reply(
-            f"✅ [{message.from_user.first_name}](tg://user?id={message.from_user.id}) подарил(-а) {value} гр. мефа {username_mention}!\n"
+            f"✅ {message.from_user.first_name}, ты передал(-а) {value} гр. мефа "
+            f"пользователю {reply_msg.from_user.full_name}.\n"
             f"Комиссия: `{commission}` гр. мефа\nПолучено `{net_value}` гр. мефа.",
-            parse_mode='markdown')
-
-        await state.set_data({'time': datetime.now()})
+            parse_mode='markdown'
+        )
 
     async def create_clan(self, message: types.Message):
-        args = message.text.split(maxsplit=1)
         user_id = message.from_user.id
         user = self.db.get_user(user_id)
-
-        if not user:
-            await message.reply('🛑 Ваш профиль не найден.')
+        if await self.check_banned(user, message):
             return
 
-        if user[4]:
-            await message.reply('🛑 Вы заблокированы в боте.')
-            return
-
+        args = message.text.split(maxsplit=1)
         if len(args) < 2:
-            await message.reply("🛑 Укажите название клана. Пример: `/clancreate КланНазвание`",
-                                parse_mode='markdown')
+            await message.reply("🛑 Укажите название клана. Пример: `/clancreate КланНазвание`", parse_mode='markdown')
             return
 
         clan_name = args[1]
@@ -442,588 +348,482 @@ class Handlers:
             await message.reply('🛑 Вы уже состоите в клане.')
             return
 
-        drug_count = user[1] or 0
-        if drug_count < 100:
+        if user[1] < 100:
             await message.reply("🛑 Недостаточно средств для создания клана. Необходимо минимум `100` гр.")
             return
 
         clan_id = random.randint(100000, 999999)
         self.db.create_clan(clan_id, clan_name, user_id, 0)
-        self.db.update_user(user_id, clan_member=clan_id, drug_count=drug_count - 100)
+        self.db.update_user(user_id, clan_member=clan_id, drug_count=user[1] - 100)
+        await message.reply(
+            f"✅ Клан `{clan_name}` успешно создан. Ваш идентификатор клана: `{clan_id}`. С вашего баланса списано "
+            f"`100` гр.",
+            parse_mode='markdown')
         await self.bot.send_message(
             message.chat.id,
-            f"#NEWCLAN\n\nclanid: `{clan_id}`\nclanname: `{clan_name}`\nclanownerid: `{user_id}`",
-            parse_mode='markdown')
-        await message.reply(
-            f"✅ Клан `{clan_name}` успешно создан. Ваш идентификатор клана: `{clan_id}`. С вашего баланса списано `100` гр.",
-            parse_mode='markdown')
+            f"#NEWCLAN\n\nclanid: `{clan_id}`\nclanname: `{clan_name}`\n"
+            f"clanownerid: `{user_id}`",
+            parse_mode='markdown'
+        )
 
     async def deposit(self, message: types.Message):
-        args = message.text.split(maxsplit=1)
         user_id = message.from_user.id
         user = self.db.get_user(user_id)
-
-        if not user or user[4]:
-            await self.check_banned(user, message)
+        if await self.check_banned(user, message):
             return
 
+        args = message.text.split(maxsplit=1)
         if len(args) < 2:
-            await message.reply(f"🛑 Вы не указали сумму. Пример:\n`/deposit 100`", parse_mode='markdown')
+            await message.reply("🛑 Вы не указали сумму. Пример: `/deposit 100`", parse_mode='markdown')
             return
 
-        try:
-            cost = int(args[1])
-            if cost <= 0:
-                await message.reply(f'❌ Значение должно быть положительным числом и не равным нулю')
-                return
-        except ValueError:
-            await message.reply(f'❌ Введи целое число')
+        cost = int(args[1]) if args[1].isdigit() else None
+        if not cost or cost <= 0:
+            await message.reply("❌ Введи целое число больше нуля.", parse_mode='markdown')
             return
 
-        user_balance = user[1]
-        clan_id = user[7]
-
-        if clan_id == 0:
-            await message.reply(f"🛑 Вы не состоите в клане", parse_mode='markdown')
+        if user[7] == 0:
+            await message.reply("🛑 Вы не состоите в клане", parse_mode='markdown')
             return
 
-        clan = self.db.get_clan_by_id(clan_id)
+        clan = self.db.get_clan_by_id(user[7])
         if not clan:
-            await message.reply(f"🛑 Информация о клане не найдена", parse_mode='markdown')
+            await message.reply("🛑 Информация о клане не найдена", parse_mode='markdown')
             return
 
-        clan_balance = clan[3]
-        clan_name = clan[1]
-        clan_owner_id = clan[2]
-
-        if cost > user_balance:
-            await message.reply(f"🛑 Недостаточно средств. Ваш баланс: `{user_balance}` гр.", parse_mode='markdown')
+        if cost > user[1]:
+            await message.reply(f"🛑 Недостаточно средств. Ваш баланс: `{user[1]}` гр.", parse_mode='markdown')
             return
 
-        new_clan_balance = clan_balance + cost
-        self.db.update_clan_balance_by_owner(clan_owner_id, new_clan_balance)
-        self.db.update_user(user_id, drug_count=user_balance - cost)
-
-        await message.reply(f"✅ Вы успешно пополнили баланс клана `{clan_name}` на `{cost}` гр.",
-                            parse_mode='markdown')
+        clan_balance = clan[3] + cost
+        self.db.update_clan_balance_by_owner(clan[2], clan_balance)  # clan_owner_id
+        self.db.update_user(user_id, drug_count=user[1] - cost)
+        await message.reply(f"✅ Вы успешно пополнили баланс клана `{clan[1]}` на `{cost}` гр.",
+                            parse_mode='markdown')  # clan_name
         await self.bot.send_message(
             message.chat.id,
-            f"#DEPOSIT\n\nclanname: `{clan_name}`\namount: `{cost}`\nuserid: `{user_id}`\nfirstname: {message.from_user.first_name}\n\n[mention](tg://user?id={user_id})",
+            f"#DEPOSIT\n\nclanname: `{clan[1]}`\namount: `{cost}`\n"
+            f"userid: `{user_id}`\nfirstname: {message.from_user.first_name}\n\n"
+            f"[mention](tg://user?id={user_id})",
             parse_mode='markdown'
         )
 
     async def withdraw(self, message: types.Message):
-        args = message.text.split()
         user_id = message.from_user.id
         user = self.db.get_user(user_id)
-
-        if not user or user[4]:
-            await self.check_banned(user, message)
-            return
-
-        if not args:
-            await message.reply(f"🛑 Вы не указали сумму. Пример:\n`/withdraw 100`", parse_mode='markdown')
-            return
-
-        try:
-            cost = int(args[0])
-            if cost <= 0:
-                await message.reply(f'❌ Значение должно быть положительным числом')
-                return
-        except ValueError:
-            await message.reply(f'❌ Введи целое число')
-            return
-
-        clan_id = user[1]
-        if clan_id == 0:
-            await message.reply(f"🛑 Вы не состоите в клане", parse_mode='markdown')
-            return
-
-        clan = self.db.get_clan_by_id(clan_id)
-        if not clan:
-            await message.reply(f"🛑 Информация о клане не найдена", parse_mode='markdown')
-            return
-
-        clan_balance, clan_name, clan_owner_id = clan[3], clan[1], clan[2]
-        if user_id != clan_owner_id:
-            await message.reply(f"🛑 Снимать деньги со счёта клана может только его владелец.", parse_mode='markdown')
-            return
-
-        if cost > clan_balance:
-            await message.reply(f"🛑 Недостаточно средств. Баланс клана: `{clan_balance}` гр.", parse_mode='markdown')
-            return
-
-        self.db.update_clan_balance_by_owner(user_id, clan_balance - cost)
-        self.db.update_user(user_id, drug_count=user[0] + cost)
-
-        await message.reply(
-            f"✅ Вы успешно сняли `{cost}` гр. мефа с баланса клана `{clan_name}`",
-            parse_mode='markdown')
-        await self.bot.send_message(message.chat.id,
-                                    f"#WITHDRAW\n\namount: `{cost}`\nclanname: `{clan_name}`\nuserid: {user_id}\n\n[mention](tg://user?id={user_id})",
-                                    parse_mode='markdown')
-
-    async def clan_top(self, message: types.Message):
-        user_id = message.from_user.id
-        user = self.db.get_user(user_id)
-        is_banned = user[4] if user else 0
         if await self.check_banned(user, message):
             return
-        elif is_banned == 0:
-            top_clans = self.db.get_top_clans()
-            if top_clans:
-                response = "🔝ТОП 10 МЕФЕДРОНОВЫХ КАРТЕЛЕЙ В МИРЕ🔝:\n"
-                counter = 1
-                for clan in top_clans:
-                    clan_name = clan[0]
-                    clan_balance = clan[1]
-                    response += f"{counter}) *{clan_name}*  `{clan_balance} гр. мефа`\n"
-                    counter += 1
-                await message.reply(response, parse_mode='markdown')
-            else:
-                await message.reply('🛑 Ещё ни один клан не пополнил свой баланс.')
+
+        args = message.text.split(maxsplit=1)
+        if len(args) < 2:
+            await message.reply("🛑 Вы не указали сумму. Пример: `/withdraw 100`", parse_mode='markdown')
+            return
+
+        cost = int(args[1]) if args[1].isdigit() else None
+        if not cost or cost <= 0:
+            await message.reply("❌ Введи целое число больше нуля.", parse_mode='markdown')
+            return
+
+        clan = self.db.get_clan_by_id(user[7])
+        if not clan or user_id != clan[2]:
+            await message.reply("🛑 Вы не являетесь владельцем клана или клан не найден.", parse_mode='markdown')
+            return
+
+        if cost > clan[3]:
+            await message.reply(f"🛑 Недостаточно средств. Баланс клана: `{clan[3]}` гр.", parse_mode='markdown')
+            return
+
+        clan_balance = clan[3] - cost
+        self.db.update_clan_balance_by_owner(user_id, clan_balance)
+        self.db.update_user(user_id, drug_count=user[1] + cost)
+        await message.reply(f"✅ Вы успешно сняли `{cost}` гр. мефа с баланса клана `{clan[1]}`",
+                            parse_mode='markdown')  # clan_name
+        await self.bot.send_message(
+            message.chat.id,
+            f"#WITHDRAW\n\namount: `{cost}`\nclanname: `{clan[1]}`\n"
+            f"userid: {user_id}\n\n[mention](tg://user?id={user_id})",
+            parse_mode='markdown'
+        )
+
+    async def clan_top(self, message: types.Message):
+        user = self.db.get_user(message.from_user.id)
+        if await self.check_banned(user, message):
+            return
+        top_clans = self.db.get_top_clans()
+        if top_clans:
+            response = "🔝ТОП 10 МЕФЕДРОНОВЫХ КАРТЕЛЕЙ В МИРЕ🔝:\n" + "\n".join(
+                f"{index}) *{clan[0]}*  `{clan[1]} гр. мефа`"
+                for index, clan in enumerate(top_clans, start=1)
+            )
+            await message.reply(response, parse_mode='markdown')
+        else:
+            await message.reply('🛑 Ещё ни один клан не пополнил свой баланс.')
 
     async def clanbalance(self, message: types.Message):
         user_id = message.from_user.id
         user = self.db.get_user(user_id)
-        is_banned = user[4] if user else 0
-        clan_id = user[7] if user else 0
-        clan = self.db.get_clan_by_id(clan_id)
         if await self.check_banned(user, message):
             return
-        elif is_banned == 0:
-            if clan_id == 0:
-                await message.reply(f"🛑 Вы не состоите в клане", parse_mode='markdown')
-            elif clan_id > 0:
-                clan_balance = clan[3]
-                clan_name = clan[1]
-                await message.reply(f'✅ Баланс клана *{clan_name}* - `{clan_balance}` гр.', parse_mode='markdown')
+        clan_id = user[7]
+        if not clan_id:
+            await message.reply(f"🛑 Вы не состоите в клане", parse_mode='markdown')
+            return
+        clan_balance = self.db.get_clan_balance(clan_id)
+        clan_name = self.db.get_clan_name(clan_id)
+        await message.reply(f'✅ Баланс клана *{clan_name}* - `{clan_balance}` гр.', parse_mode='markdown')
 
     async def clanwar(self, message: types.Message):
         user_id = message.from_user.id
         user = self.db.get_user(user_id)
-        is_banned = user[4] if user else 0
-        clan_id = user[7] if user else 0
-        clan = self.db.get_clan_by_id(clan_id)
         if await self.check_banned(user, message):
             return
-        elif is_banned == 0:
-            if clan_id == 0:
-                await message.reply(f"🛑 *Вы не состоите в клане*", parse_mode='markdown')
-            elif clan_id > 0:
-                clan_name = clan[1]
-                clan_owner_id = clan[2]
-                if user_id != clan_owner_id:
-                    await message.reply(f"🛑 *Вы не являетесь владельцем клана*", parse_mode='markdown')
-                    return
-                if len(message.text.split()) < 2:
-                    await message.reply(f"🛑 *Вы не указали идентификатор клана для начала войны*",
-                                        parse_mode='markdown')
-                    return
-                target_clan_id = message.text.split()[1]
-                target_clan = self.db.get_clan_by_id(target_clan_id)
-                if not target_clan:
-                    await message.reply(f"🛑 *Не удалось найти клан с указанным идентификатором*",
-                                        parse_mode='markdown')
-                    return
-                target_clan_name = target_clan[1]
-                await message.reply(f"*Клан {clan_name} начал войну с {target_clan_name}!*", parse_mode='markdown')
-                chats = self.db.get_all_chats()
-                for chat_id in chats:
-                    try:
-                        await self.bot.send_message(chat_id[0],
-                                                    f"*Клан {clan_name} начал войну с {target_clan_name}!*",
-                                                    parse_mode='markdown')
-                    except Exception as e:
-                        print(f"Ошибка отправки сообщения в {chat_id}: {e}")
+
+        clan_id = user[7]
+        if not clan_id:
+            await message.reply(f"🛑 *Вы не состоите в клане*", parse_mode='markdown')
+            return
+
+        clan = self.db.get_clan_by_id(clan_id)
+        clan_name = clan[1]
+        if user_id != clan[2]:
+            await message.reply(f"🛑 *Вы не являетесь владельцем клана*", parse_mode='markdown')
+            return
+
+        args = message.text.split(maxsplit=1)
+        if len(args) < 2:
+            await message.reply(f"🛑 *Вы не указали идентификатор клана для начала войны*", parse_mode='markdown')
+            return
+        target_clan_id = args[1]
+
+        target_clan = self.db.get_clan_by_id(target_clan_id)
+        if not target_clan:
+            await message.reply(f"🛑 *Не удалось найти клан с указанным идентификатором*", parse_mode='markdown')
+            return
+        target_clan_name = target_clan[1]
+        await message.reply(f"*Клан {clan_name} начал войну с {target_clan_name}!*", parse_mode='markdown')
+
+        chats = self.db.get_all_chats()
+        for chat_id in chats:
+            try:
+                await self.bot.send_message(chat_id[0],
+                                            f"*Клан {clan_name} начал войну с {target_clan_name}!*",
+                                            parse_mode='markdown')
+            except Exception as e:
+                print(f"Ошибка отправки сообщения в {chat_id}: {e}")
 
     async def clan_owner(self, message: types.Message):
         user_id = message.from_user.id
         user = self.db.get_user(user_id)
-        is_banned = user[4] if user else 0
-        clan_id = user[7] if user else 0
-        clan = self.db.get_clan_by_id(clan_id)
         if await self.check_banned(user, message):
             return
-        elif is_banned == 0:
-            if clan_id == 0:
-                await message.reply(f"🛑 *Вы не состоите в клане*", parse_mode='markdown')
-            elif clan_id > 0:
-                current_owner_id = clan[2]
-                if user_id != current_owner_id:
-                    await message.reply(f"🛑 *Вы не являетесь владельцем клана*", parse_mode='markdown')
-                    return
-                if message.reply_to_message:
-                    new_owner_id = message.reply_to_message.from_user.id
-                elif len(message.text.split()) >= 2:
-                    new_owner_id = int(message.text.split()[1])
-                else:
-                    await message.reply(f"🛑 *Вы не указали нового владельца клана*", parse_mode='markdown')
-                    return
-                new_owner = self.db.get_user(new_owner_id)
-                if not new_owner:
-                    await message.reply(f"🛑 *Не удалось найти пользователя с указанным идентификатором*",
-                                        parse_mode='markdown')
-                    return
-                self.db.update_clan_owner(clan_id, new_owner_id)
-                await message.reply(f"✅ *Вы передали владельца клана!*", parse_mode='markdown')
+
+        clan_id = user[7]
+        if not clan_id:
+            await message.reply(f"🛑 *Вы не состоите в клане*", parse_mode='markdown')
+            return
+
+        clan = self.db.get_clan_by_id(clan_id)
+        if user_id != clan[2]:
+            await message.reply(f"🛑 *Вы не являетесь владельцем клана*", parse_mode='markdown')
+            return
+        if message.reply_to_message:
+            new_owner_id = message.reply_to_message.from_user.id
+        elif len(message.text.split()) >= 2:
+            new_owner_id = int(message.text.split()[1])
+        else:
+            await message.reply(f"🛑 *Вы не указали нового владельца клана*", parse_mode='markdown')
+            return
+        new_owner = self.db.get_user(new_owner_id)
+        if not new_owner:
+            await message.reply(f"🛑 *Не удалось найти пользователя с указанным идентификатором*",
+                                parse_mode='markdown')
+            return
+        self.db.update_clan_owner(clan_id, new_owner_id)
+        await message.reply(f"✅ *Вы передали владельца клана!*", parse_mode='markdown')
 
     async def claninfo(self, message: types.Message):
-        user_id = message.from_user.id
-        user = self.db.get_user(user_id)
-        is_banned = user[4] if user else 0
-        clan_id = user[7] if user else 0
-        clan = self.db.get_clan_by_id(clan_id)
+        user = self.db.get_user(message.from_user.id)
         if await self.check_banned(user, message):
             return
-        elif is_banned == 0:
-            if clan_id == 0:
-                await message.reply(f"🛑 Вы не состоите в клане", parse_mode='markdown')
-            elif clan_id > 0:
-                clan_balance = clan[0]
-                clan_name = clan[1]
-                clan_owner_id = clan[2]
-                clan_owner = await self.bot.get_chat(clan_owner_id)
-                await message.reply(
-                    f"👥 Клан: `{clan_name}`\n👑 Владелец клана: [{clan_owner.first_name}](tg://user?id={clan_owner_id})\n🌿 Баланс клана `{clan_balance}` гр.",
-                    parse_mode='markdown')
+
+        clan_id = user[7]
+        if not clan_id:
+            await message.reply(f"🛑 Вы не состоите в клане", parse_mode='markdown')
+            return
+
+        clan = self.db.get_clan_by_id(clan_id)
+        clan_balance = clan[3]
+        clan_name = clan[1]
+        clan_owner_id = clan[2]
+        clan_owner = await self.bot.get_chat(clan_owner_id)
+        await message.reply(
+            f"👥 Клан: `{clan_name}`\n"
+            f"👑 Владелец клана: [{clan_owner.first_name}](tg://user?id={clan_owner_id})\n"
+            f"🌿 Баланс клана `{clan_balance}` гр.",
+            parse_mode='markdown'
+        )
 
     async def clanmembers(self, message: types.Message):
         user_id = message.from_user.id
         user = self.db.get_user(user_id)
-        is_banned = user[4] if user else 0
 
-        if await self.check_banned(user, message):
+        if not user or await self.check_banned(user, message) or not user[7]:
+            await message.reply(f"🛑 Вы не состоите в клане или заблокированы", parse_mode='markdown')
             return
-        elif is_banned == 0:
-            clan_id = user[7] if user else 0
-            clan_members = self.db.get_clan_members(clan_id)
-            clan = self.db.get_clan_by_id(clan_id)
-            if clan:
-                clan_name = clan[0]
-                clan_owner_id = clan[1]
-                if clan_id > 0:
-                    if clan_members:
-                        response = f"👥 Список участников клана *{clan_name}*:\n"
-                        counter = 1
-                        clan_owner = None
-                        for member in clan_members:
-                            if member[0] == clan_owner_id:
-                                clan_owner = member
-                                break
-                        if clan_owner:
-                            user_info = await self.bot.get_chat(clan_owner[0])
-                            response += f"{counter}) *{user_info.full_name}* 👑\n"
-                            counter += 1
-                        for member in clan_members:
-                            if member[0] != clan_owner_id:
-                                user_info = await self.bot.get_chat(member[0])
-                                response += f"{counter}) {user_info.full_name}\n"
-                                counter += 1
-                        await message.reply(response, parse_mode='markdown')
-            else:
-                await message.reply(f"🛑 Вы не состоите в клане", parse_mode='markdown')
+
+        clan_members = self.db.get_clan_members(user[7])
+        if not clan_members:
+            await message.reply(f"🛑 В клане нет участников", parse_mode='markdown')
+            return
+
+        clan_name = self.db.get_clan_by_id(user[7])[1]
+        response = f"👥 Список участников клана *{clan_name}*:\n"
+        for counter, member in enumerate(clan_members, 1):
+            member_info = await self.bot.get_chat(member[0])
+            member_role = "👑" if member[0] == user[7] else ""
+            response += f"{counter}) *{member_info.full_name}* {member_role}\n"
+        await message.reply(response, parse_mode='markdown')
 
     async def claninvite(self, message: types.Message):
         user_id = message.from_user.id
         user = self.db.get_user(user_id)
-        is_banned = user[4] if user else 0
-        clan_id = user[7] if user else 0
-        clan = self.db.get_clan_by_id(clan_id)
-        if await self.check_banned(user, message):
+        clan_id = user[7] if user else None
+        if await self.check_banned(user, message) or not clan_id:
             return
-        elif is_banned == 0:
-            if clan:
-                clan_name = clan[1]
-                clan_owner_id = clan[2]
-                if user_id == clan_owner_id:
-                    reply_msg = message.reply_to_message
-                    if reply_msg and reply_msg.from_user.id == self.bot.id:
-                        await message.reply(f'❌ Вы не можете пригласить бота в клан')
-                        return
-                    elif reply_msg:
-                        invited_user_id = reply_msg.from_user.id
-                        invited_user = self.db.get_user(invited_user_id)
-                        clan_member = invited_user[7]
-                        clan_invite = invited_user[8]
 
-                        if clan_member == 0 and clan_invite == 0:
-                            self.db.update_user(invited_user_id, clan_invite=clan_id)
-                            await message.reply(
-                                f'✅ Пользователь {reply_msg.from_user.first_name} *приглашён в клан {clan_name}* '
-                                f'пользователем {message.from_user.first_name}\nДля того чтобы принять приглашение, '
-                                f'*введите команду* `/clanaccept`\nДля того чтобы отказаться от приглашения, '
-                                f'*введите команду* `/clandecline`',
+        clan = self.db.get_clan_by_id(clan_id)
+        if user_id != clan[2]:
+            await message.reply(f"🛑 Только владелец клана может приглашать участников", parse_mode='markdown')
+            return
+
+        reply_msg = message.reply_to_message
+        if not reply_msg:
+            await message.reply(f"🛑 Ответьте на сообщение пользователя, которого хотите пригласить",
                                 parse_mode='markdown')
-                        elif clan_invite > 0:
-                            await message.reply(f"🛑 Этот пользователь уже имеет активное приглашение",
-                                                parse_mode='markdown')
-                        elif clan_member > 0:
-                            await message.reply(f"🛑 Этот пользователь уже в клане", parse_mode='markdown')
-                else:
-                    await message.reply(f"🛑 Приглашать в клан может только создатель", parse_mode='markdown')
-            else:
-                await message.reply(f"🛑 {sys.exc_info()[0]}")
+            return
+
+        if reply_msg.from_user.id == self.bot.id:
+            await message.reply(f'❌ Бот не может быть приглашен в клан', parse_mode='markdown')
+            return
+
+        invited_user_id = reply_msg.from_user.id
+        invited_user = self.db.get_user(invited_user_id)
+        if invited_user[7]:
+            await message.reply(f"🛑 Пользователь уже состоит в клане", parse_mode='markdown')
+            return
+
+        if invited_user[8]:
+            await message.reply(f"🛑 У пользователя уже есть приглашение", parse_mode='markdown')
+            return
+
+        self.db.update_user_clan_invite(invited_user_id, clan_id)
+        await message.reply(
+            f'✅ Пользователь {reply_msg.from_user.first_name} приглашен в клан {clan[1]}',
+            parse_mode='markdown'
+        )
 
     async def clankick(self, message: types.Message):
         user_id = message.from_user.id
         user = self.db.get_user(user_id)
-        is_banned = user[4] if user else 0
-        clan_id = user[7] if user else 0
-        clan = self.db.get_clan_by_id(clan_id)
-        clan_name = clan[1]
-        clan_owner_id = int(clan[2])
-        if await self.check_banned(user, message):
+        clan_id = user[7] if user else None
+        if await self.check_banned(user, message) or not clan_id:
             return
-        elif is_banned == 0:
-            if clan_id == 0:
-                await message.reply(f"🛑 Вы не состоите в клане", parse_mode='markdown')
-            elif clan_id > 0 and user_id == clan_owner_id:
-                reply_msg = message.reply_to_message
-                if reply_msg:
-                    kicked_user_id = reply_msg.from_user.id
-                    self.db.update_user(kicked_user_id, clan_member=0)
-                    await message.reply(
-                        f'✅ Пользователь @{reply_msg.from_user.username} *исключен из клана {clan_name}* пользователем @{message.from_user.username}',
-                        parse_mode='markdown')
-            else:
-                await message.reply(f"🛑 Исключать из клана может только создатель", parse_mode='markdown')
+
+        clan = self.db.get_clan_by_id(clan_id)
+        if user_id != clan[2]:
+            await message.reply(f"🛑 Только владелец клана может исключать участников", parse_mode='markdown')
+            return
+
+        reply_msg = message.reply_to_message
+        if not reply_msg:
+            await message.reply(f"🛑 Ответьте на сообщение пользователя, которого хотите исключить",
+                                parse_mode='markdown')
+            return
+
+        kicked_user_id = reply_msg.from_user.id
+        self.db.remove_user_from_clan(kicked_user_id)
+        await message.reply(
+            f'✅ Пользователь {reply_msg.from_user.first_name} исключен из клана {clan[1]}',
+            parse_mode='markdown'
+        )
 
     async def clanleave(self, message: types.Message):
         user_id = message.from_user.id
         user = self.db.get_user(user_id)
-        is_banned = user[4] if user else 0
-        clan_id = user[7] if user else 0
-        clan = self.db.get_clan_by_id(clan_id)
-        clan_name = clan[1]
-        clan_owner_id = int(clan[2])
-        if await self.check_banned(user, message):
+        clan_id = user[7] if user else None
+        if await self.check_banned(user, message) or not clan_id:
             return
-        elif is_banned == 0:
-            if clan_id == 0:
-                await message.reply(f"🛑 Вы не состоите в клане", parse_mode='markdown')
-            elif clan_id > 0 and user_id != clan_owner_id:
-                self.db.update_user(user_id, clan_member=0)
-                await message.reply(f'✅ *Вы покинули* клан *{clan_name}*', parse_mode='markdown')
-            elif clan_id > 0 and user_id == clan_owner_id:
-                await message.reply(f"🛑 Создатель клана не может его покинуть", parse_mode='markdown')
+        clan = self.db.get_clan_by_id(clan_id)
+        if user_id == clan[2]:
+            await message.reply(f"🛑 Владелец клана не может его покинуть", parse_mode='markdown')
+            return
+
+        self.db.remove_user_from_clan(user_id)
+        await message.reply(f'✅ Вы покинули клан {clan[1]}', parse_mode='markdown')
 
     async def clandisband(self, message: types.Message):
         user_id = message.from_user.id
         user = self.db.get_user(user_id)
-        is_banned = user[4] if user else 0
-        clan_id = user[7] if user else 0
-        clan = self.db.get_clan_by_id(clan_id)
-        if await self.check_banned(user, message):
+        clan_id = user[7] if user else None
+        if await self.check_banned(user, message) or not clan_id:
             return
-        elif is_banned == 0:
-            if clan_id > 0 and user_id == clan[2]:
-                self.db.delete_clan(clan_id)
-                self.db.update_users_with_clan_id(clan_id, clan_member=0, clan_invite=0)
-                await message.reply(f'✅ Вы распустили клан `{clan[1]}`', parse_mode='markdown')
-            else:
-                await message.reply(f"🛑 Вы не владелец клана!", parse_mode='markdown')
+        clan = self.db.get_clan_by_id(clan_id)
+        if user_id != clan[2]:
+            await message.reply(f"🛑 Только владелец клана может его распустить", parse_mode='markdown')
+            return
+
+        self.db.delete_clan(clan_id)
+        await message.reply(f'✅ Клан {clan[1]} распущен', parse_mode='markdown')
 
     async def clanaccept(self, message: types.Message):
         user_id = message.from_user.id
         user = self.db.get_user(user_id)
-        is_banned = user[4] if user else 0
-        clan_invite = user[8] if user else 0
         if await self.check_banned(user, message):
             return
-        elif is_banned == 0:
-            if clan_invite:
-                clan = self.db.get_clan_by_id(clan_invite)
-                self.db.update_user(user_id, clan_member=clan_invite, clan_invite=0)
-                await message.reply(f'✅ *Вы приняли* приглашение в клан *{clan[1]}*', parse_mode='markdown')
-            else:
-                await message.reply('🛑 Вы ещё не получали приглашений в клан')
+        if user[8]:
+            self.db.update_user(user_id, clan_member=user[8], clan_invite=None)
+            clan_name = self.db.get_clan_by_id(user[8])[1]
+            await message.reply(f'✅ Вы приняли приглашение в клан {clan_name}', parse_mode='markdown')
+        else:
+            await message.reply('🛑 У вас нет приглашений', parse_mode='markdown')
 
     async def clandecline(self, message: types.Message):
         user_id = message.from_user.id
         user = self.db.get_user(user_id)
-        is_banned = user[4] if user else 0
-        clan_invite = user[8] if user else 0
         if await self.check_banned(user, message):
             return
-        elif is_banned == 0:
-            if clan_invite:
-                clan = self.db.get_clan_by_id(clan_invite)
-                self.db.update_user(user_id, clan_invite=0)
-                await message.reply(f'❌ *Вы отклонили* приглашение в клан *{clan[1]}*', parse_mode='markdown')
-            else:
-                await message.reply('🛑 Вы ещё не получали приглашений в клан')
+        if user[8]:
+            clan_name = self.db.get_clan_by_id(user[8])[1]
+            self.db.update_user(user_id, clan_invite=None)
+            await message.reply(f'❌ Вы отклонили приглашение в клан {clan_name}', parse_mode='markdown')
+        else:
+            await message.reply('🛑 У вас нет приглашений', parse_mode='markdown')
 
-    async def drug_find(self, message: types.Message, state: FSMContext):
+    async def drug_find(self, message: types.Message):
+        user = self.db.get_user(message.from_user.id)
         user_id = message.from_user.id
-        user = self.db.get_user(user_id)
-        drug_count = user[1] if user else 0
-        last_time = await state.get_data()
-        last_used = user[6] if user else '2021-02-14 16:04:04.465506'
-        is_banned = user[4] if user else 0
         if await self.check_banned(user, message):
             return
-        elif is_banned == 0:
-            if last_used is not None and (
-                    datetime.now() - datetime.fromisoformat(last_used)).total_seconds() < 43200:
-                await message.reply('⏳ Ты недавно *ходил за кладом, подожди 12 часов.*', parse_mode='markdown')
-                return
-            else:
-                if random.randint(1, 100) > 50:
-                    count = random.randint(1, 10)
-                    if user:
-                        self.db.update_user(user_id, drug_count=drug_count + count)
-                    else:
-                        self.db.add_user(user_id, drug_count=count)
-                    self.db.update_user(user_id, last_use_time='2006-02-20 12:45:37.666666',
-                                        last_find=datetime.now().isoformat())
-                    await self.bot.send_message(message.chat.id,
-                                                f"#FIND #WIN\n\nfirst\_name: `{message.from_user.first_name}`\ncount: `{count}`\ndrug\_count: `{drug_count + count}`\n\n[mention](tg://user?id={user_id})",
-                                                parse_mode='markdown')
-                    await message.reply(
-                        f"👍 {message.from_user.first_name}, ты пошёл в лес и *нашел клад*, там лежало `{count} гр.` "
-                        f"мефчика!\n🌿 Твое время команды /drug обновлено",
-                        parse_mode='markdown')
-                elif random.randint(1, 100) <= 50:
-                    count = random.randint(1, round(drug_count))
-                    self.db.update_user(user_id, drug_count=drug_count - count)
-                    await self.bot.send_message(message.chat.id,
-                                                f"#FIND #LOSE\n\nfirst\_name: `{message.from_user.first_name}`\ncount: `{count}`\ndrug\_count: `{drug_count - count}`\n\n[mention](tg://user?id={user_id})",
-                                                parse_mode='markdown')
-                    await message.reply(
-                        f"❌ *{message.from_user.first_name}*, тебя *спалил мент* и *дал тебе по ебалу*\n🌿 Тебе нужно "
-                        f"откупиться, мент предложил взятку в размере `{count} гр.`\n⏳ Следующая попытка доступна через "
-                        f"*12 часов.*",
-                        parse_mode='markdown')
+        drug_count = user[1] if user else 0
+        last_find_time = user[6] if user and user[6] else datetime.min.isoformat()
+
+        if (datetime.now() - datetime.fromisoformat(last_find_time)).total_seconds() < 43200:
+            await message.reply('⏳ Ты недавно *ходил за кладом, подожди 12 часов.*', parse_mode='markdown')
+            return
+        else:
+            if random.randint(1, 100) > 50:
+                count = random.randint(1, 10)
+                if user:
+                    self.db.update_user(user_id, drug_count=drug_count + count)
+                else:
+                    self.db.add_user(user_id, drug_count=count)
+                self.db.update_user(user_id, last_use_time='2006-02-20 12:45:37.666666',
+                                    last_find=datetime.now().isoformat())
+                await self.bot.send_message(
+                    message.chat.id,
+                    f"#FIND #WIN\n\nfirst\\_name: `{message.from_user.first_name}`\n"
+                    f"count: `{count}`\ndrug\\_count: `{drug_count + count}`\n\n"
+                    f"[mention](tg://user?id={user_id})",
+                    parse_mode='markdown'
+                )
+                await message.reply(
+                    f"👍 {message.from_user.first_name}, ты пошёл в лес и *нашел клад*, там лежало `{count} гр.` "
+                    f"мефчика!\n🌿 Твое время команды /drug обновлено",
+                    parse_mode='markdown')
+            elif random.randint(1, 100) <= 50:
+                count = random.randint(1, round(drug_count))
+                self.db.update_user(user_id, drug_count=drug_count - count)
+                await self.bot.send_message(
+                    message.chat.id,
+                    f"#FIND #LOSE\n\nfirst\\_name: `{message.from_user.first_name}`\n"
+                    f"count: `{count}`\ndrug\\_count: `{drug_count - count}`\n\n"
+                    f"[mention](tg://user?id={user_id})",
+                    parse_mode='markdown'
+                )
+                await message.reply(
+                    f"❌ *{message.from_user.first_name}*, тебя *спалил мент* и *дал тебе по ебалу*\n🌿 Тебе нужно "
+                    f"откупиться, мент предложил взятку в размере `{count} гр.`\n⏳ Следующая попытка доступна через "
+                    f"*12 часов.*",
+                    parse_mode='markdown')
 
     async def banuser_command(self, message: types.Message):
-        user_id = message.from_user.id
-        user = self.db.get_user(user_id)
-        is_admin = user[3]
-        if is_admin == 1:
-            bann_user_id = None
-            reply_msg = message.reply_to_message
-            if reply_msg and reply_msg.from_user.id != user_id:
-                bann_user_id = reply_msg.from_user.id
+        user = self.db.get_user(message.from_user.id)
+        if user and user[3]:
+            ban_user_id = message.reply_to_message.from_user.id if message.reply_to_message else None
+            if ban_user_id:
+                self.db.update_user(ban_user_id, is_banned=1)
+                await message.reply(f"🛑 Пользователь с ID: `{ban_user_id}` заблокирован", parse_mode='markdown')
             else:
-                args = message.text.split()
-                if len(args) > 1:
-                    try:
-                        bann_user_id = int(args[1])
-                    except ValueError:
-                        await message.reply('Некорректный ID пользователя.')
-                        return
-
-            if bann_user_id:
-                self.db.update_user(bann_user_id, is_banned=1)
-                await message.reply(f"🛑 Пользователь с ID: `{bann_user_id}` заблокирован", parse_mode='markdown')
-                await self.bot.send_message(message.chat.id, f"#BAN\n\nid: {bann_user_id}")
-            else:
-                await message.reply('Не указан ID пользователя.')
+                await message.reply('Не указан ID пользователя для блокировки.')
         else:
             await message.reply('🚨 MONKEY ALARM')
 
     async def unbanuser_command(self, message: types.Message):
-        user_id = message.from_user.id
-        user = self.db.get_user(user_id)
-        is_admin = user[3]
-        if is_admin == 1:
-            bann_user_id = None
-            reply_msg = message.reply_to_message
-            if reply_msg and reply_msg.from_user.id != user_id:
-                bann_user_id = reply_msg.from_user.id
+        user = self.db.get_user(message.from_user.id)
+        if user and user[3]:
+            ban_user_id = message.reply_to_message.from_user.id if message.reply_to_message else None
+            if ban_user_id:
+                self.db.update_user(ban_user_id, is_banned=0)
+                await message.reply(f"🛑 Пользователь с ID: `{ban_user_id}` заблокирован", parse_mode='markdown')
             else:
-                args = message.text.split()
-                if len(args) > 1:
-                    try:
-                        bann_user_id = int(args[1])
-                    except ValueError:
-                        await message.reply('Некорректный ID пользователя.')
-                        return
-
-            if bann_user_id:
-                self.db.update_user(bann_user_id, is_banned=0)
-                await message.reply(f"🛑 Пользователь с ID: `{bann_user_id}` разблокирован", parse_mode='markdown')
-                await self.bot.send_message(message.chat.id, f"#UNBAN\n\nid: {bann_user_id}")
-            else:
-                await message.reply('Не указан ID пользователя.')
+                await message.reply('Не указан ID пользователя для блокировки.')
         else:
             await message.reply('🚨 MONKEY ALARM')
 
     async def setdrugs_command(self, message: types.Message):
-        user_id = message.from_user.id
-        user = self.db.get_user(user_id)
-
-        if user[3] != 1:
-            await message.reply('🚨 MONKEY ALARM')
+        admin_user = self.db.get_user(message.from_user.id)
+        if not admin_user or admin_user[3] != 1:
+            await message.reply('🚨 Вы не имеете права использовать эту команду.')
             return
 
-        args = message.text.split(maxsplit=2)
-        if len(args) < 3:
-            await message.reply(
-                '🚨 Неправильное использование команды. Нужно указать ID пользователя и количество грамм.')
+        reply_msg = message.reply_to_message
+        if not reply_msg:
+            await message.reply('🚨 Ответьте на сообщение пользователя, чтобы установить количество грамм.')
             return
 
-        target_user_id, drug_amount = args[1], args[2]
+        args = message.text.split(maxsplit=1)
+        if len(args) < 2:
+            await message.reply('🚨 Ошибка: нужно указать количество грамм.')
+            return
+
         try:
-            target_user_id = int(target_user_id)
-            drug_amount = int(drug_amount)
+            drug_amount = int(args[1])
+            target_user_id = reply_msg.from_user.id
+            self.db.update_user(target_user_id, drug_count=drug_amount)
+            await message.reply(
+                f'✅ Количество грамм для пользователя {reply_msg.from_user.full_name} обновлено до {drug_amount}.')
         except ValueError:
-            await message.reply('🚨 Ошибка: нужно ввести целые числа для ID пользователя и количества грамм.')
-            return
-
-        self.db.update_user(target_user_id, drug_count=drug_amount)
-        await message.reply('✅ Количество грамм обновлено.')
+            await message.reply('🚨 Ошибка: количество грамм должно быть целым числом.')
 
     async def usercount(self, message: types.Message):
-        user_id = message.from_user.id
-        user = self.db.get_user(user_id)
-        is_admin = user[3]
-        user_count = len(self.db.get_top_users(limit=None))
-        if is_admin == 1:
+        user = self.db.get_user(message.from_user.id)
+        if user and user[3]:
+            user_count = len(self.db.get_top_users(limit=None))
             await message.reply(f'Количество пользователей в боте: {user_count}')
         else:
             await message.reply('🚨 MONKEY ALARM')
 
-    async def cmd_broadcast_start(self, message: Message):
+    async def cmd_broadcast_start(self, message: types.Message):
         user_id = message.from_user.id
         user = self.db.get_user(user_id)
-        is_admin = user[3]
-        all_chats = self.db.get_all_chats()
-        reply = message.reply_to_message
-        if is_admin == 1:
-            if reply:
-                if reply.photo:
-                    if reply.caption:
-                        await message.reply('Начинаю рассылку')
-                        for chat_id in all_chats:
-                            try:
-                                await self.bot.send_photo(chat_id, reply.photo[-1].file_id,
-                                                          caption=f"{reply.caption}",
-                                                          parse_mode='markdown')
-                            except:
-                                await self.bot.send_message(message.chat.id,
-                                                            f"#SENDERROR\n\nchatid: {chat_id}\nerror: {sys.exc_info()[0]}")
-                                continue
-                    else:
-                        await message.reply('Начинаю рассылку')
-                        for chat_id in all_chats:
-                            try:
-                                await self.bot.send_photo(chat_id, reply.photo[-1].file_id)
-                            except:
-                                await self.bot.send_message(message.chat.id,
-                                                            f"#SENDERROR\n\nchatid: {chat_id}\nerror: {sys.exc_info()[0]}")
-                                continue
-                elif reply.text:
-                    await message.reply('Начинаю рассылку')
-                    for chat_id in all_chats:
-                        try:
-                            await self.bot.send_message(chat_id, f"{reply.text}", parse_mode='markdown')
-                        except:
-                            await self.bot.send_message(message.chat.id,
-                                                        f"#SENDERROR\n\nchatid: {chat_id}\nerror: {sys.exc_info()[0]}")
-                            continue
-            else:
-                await message.reply('Ответь на сообщение с текстом или фото для рассылки')
-        else:
+        if not user or user[3] != 1:
             await message.reply('🚨 MONKEY ALARM')
+            return
+
+        reply = message.reply_to_message
+        if not reply:
+            await message.reply('Ответь на сообщение с текстом или фото для рассылки')
+            return
+
+        all_chats = self.db.get_all_chats()
+        await message.reply('Начинаю рассылку')
+        for chat_id in all_chats:
+            try:
+                if reply.photo:
+                    photo_id = reply.photo[-1].file_id
+                    caption = reply.caption if reply.caption else ''
+                    await self.bot.send_photo(chat_id, photo_id, caption=caption, parse_mode='markdown')
+                else:
+                    await self.bot.send_message(chat_id, reply.text, parse_mode='markdown')
+            except Exception as e:
+                logging.error(f"Ошибка отправки сообщения в {chat_id}: {e}")

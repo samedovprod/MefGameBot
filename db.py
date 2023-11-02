@@ -52,8 +52,13 @@ class Database:
         self.cursor.execute('UPDATE users SET drug_count = drug_count + ? WHERE id = ?', (count, user_id))
         self.conn.commit()
 
-    def get_top_users(self, limit=10):
-        self.cursor.execute('SELECT id, drug_count FROM users ORDER BY drug_count DESC LIMIT ?', (limit,))
+    def get_top_users(self, limit=None):
+        query = 'SELECT id, drug_count FROM users ORDER BY drug_count DESC'
+        params = ()
+        if limit is not None:
+            query += ' LIMIT ?'
+            params = (limit,)
+        self.cursor.execute(query, params)
         return self.cursor.fetchall()
 
     def get_clan_by_name(self, clan_name):
